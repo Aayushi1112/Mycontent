@@ -1,0 +1,16 @@
+High Cohesion - Only class has one responsibility
+Loose Coupling - Classes/Layers should not have too much dependency on each other
+
+https://www.mysqltutorial.org/mysql-foreign-key/
+
+CREATE  TABLE IF NOT EXISTS `Product` (
+  `product_id` INT  AUTO_INCREMENT ,
+  `product_name` VARCHAR(150) NOT NULL ,
+  `description` VARCHAR(250) NOT NULL ,
+  `price_per_qty` DOUBLE NOT NULL,
+  `available_qty` INT NOT NULL,
+  `category_id_fk` INT,
+   CONSTRAINT fk_category 
+   FOREIGN KEY(category_id_fk) REFERENCES Category(category_id) ,
+  PRIMARY KEY (`product_id`) 
+ );

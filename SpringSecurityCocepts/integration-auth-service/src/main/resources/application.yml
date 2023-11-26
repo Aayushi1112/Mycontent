@@ -1,0 +1,105 @@
+server:
+  port: 8800
+  maxHttpHeaderSize: 81920
+  forward-headers-strategy: native
+  servlet:
+    context-path: /manage-auth
+  error:
+    include-message: always
+ 
+fc:
+  credentials:
+    clientId: franconnect_client
+    secret: a1B2c!3D@4e5#F6g7H8
+ 
+wm:
+  credentials:
+    clientId: franconnect_client
+    secret: a1B2c!3D@4e5#F6g7H8
+ 
+fcAuth:
+  clientId: franconnect_client
+  clientSecret: "@a1B2c!3D4e5#F6g7H8"
+  paSystem: FC
+ 
+wmAuth:
+  clientId: franconnect_client
+  clientSecret: "@a1B2c!3D4e5#F6g7H8"
+  paSystem: WM
+ 
+ias:
+  jwt:
+    secret:
+      key: dgfdtdrfyftyftyftyftyftyuftyf
+    expirationInHours:
+      session: 4
+      refresh: 12
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/
+ 
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/security_db
+      database: security_db
+ 
+threadPool:
+  connectionPool:
+    minimumIdle: 5
+    maximumPoolSize: 30
+ 
+logging:
+  level:
+    root: info
+  pattern:
+    console: "%d{dd-MM-yyyy HH:mm:ss.SSS} %magenta([%thread]) - %cyan(%X{url}) %highlight(%-5level) %logger.%M\\(%F:%L\\) - %cyan(%X{tenantUserInfo}) - %msg%n"
+ 
+---
+# data-synchronization-service instance when used on Docker
+spring:
+  config:
+    activate:
+      on-profile: docker
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/test_db?retryWrites=true&w=majority
+      database: test_db
+ 
+threadPool:
+  connectionPool:
+    minimumIdle: 5
+    maximumPoolSize: 30
+ 
+eureka:
+  # Register our microservices to Eureka using hostnames in a Docker environment will not work, they will all get
+  # one and the same hostname. Instead we configure them to use its IP address during registration with Eureka.
+  instance:
+    statusPageUrlPath: /actuator/info
+    healthCheckUrlPath: /actuator/health
+    metadata-map:
+      management:
+        context-path: ${server.servlet.context-path}/actuator
+    preferIpAddress: true
+  client:
+    serviceUrl:
+      defaultZone: http://integration-registry-service-1.${SERVICE_RUN_ENVIRONEMENT}.local:8761/eureka/,http://integration-registry-service-2.${SERVICE_RUN_ENVIRONEMENT}.local:8762/eureka/
+ 
+ 
+# Define the port where the API gateway server would be running. This could always be port 8080
+# since each docker container has it's own IP
+server:
+  port: 8869
+  maxHttpHeaderSize: 81920
+  servlet:
+    context-path: /manage-auth
+ 
+logging:
+  level:
+    root: info
+  pattern:
+    console: "%d{dd-MM-yyyy HH:mm:ss.SSS} %magenta([%thread]) - %cyan(%X{url}) %highlight(%-5level) %logger.%M\\(%F:%L\\) - %cyan(%X{tenantUserInfo}) - %msg%n"
+ 
+auth:
+  saltKey: fxgfgfdgf

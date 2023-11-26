@@ -1,0 +1,9 @@
+rootProject.name = 'integration-auth-service'
+//include 'fcsky-service-library'
+/*if(startParameter.getProjectProperties().get('fcskyServiceLibrary') != null) {
+    println "fcsky-service-library supplied from environment var 'fcskyServiceLibrary' :: ${startParameter.getProjectProperties().get('fcskyServiceLibrary')}"
+    project(':fcsky-service-library').projectDir = new File("../${startParameter.getProjectProperties().get('fcskyServiceLibrary')}")
+} else {
+    println "Using default fcsky-service-library..."
+    project(':fcsky-service-library').projectDir = new File('../fcsky-service-library')
+}*/

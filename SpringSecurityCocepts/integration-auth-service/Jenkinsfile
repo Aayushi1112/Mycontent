@@ -1,0 +1,256 @@
+#!groovy
+@Library('fc-shared-libraries') _
+String branchName = env.BRANCH_NAME
+def getShortCommitHash() {
+    return sh(returnStdout: true, script: "git log -n 1 --pretty=format:'%h'").trim()
+}
+String determineRepoName() {
+    return scm.getUserRemoteConfigs()[0].getUrl().tokenize('/').last().split("\\.")[0]
+}
+
+def ENV
+def CLUSTER_NAME
+def ECR_REPO_URL
+
+if  (  env.BRANCH_NAME == 'develop' ) {
+        ENV="integration-dev"
+        CLUSTER_NAME="${ENV}-cluster"
+        REGION="us-east-1"
+        AWS_ACCOUNT="155086999298"
+        ECR_REPO_URL="${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/msa-${ENV}"
+}
+else if (  env.BRANCH_NAME == 'master' ) {
+
+        ENV="integration-qa"
+        CLUSTER_NAME="${ENV}-cluster"
+        REGION="us-east-1"
+        AWS_ACCOUNT="155086999298"
+        ECR_REPO_URL="${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/msa-${ENV}"
+}
+else if (  env.BRANCH_NAME == 'uat' ) {
+
+  ENV="integration-ustage"
+  CLUSTER_NAME="${ENV}-cluster"
+  REGION="us-east-1"
+  AWS_ACCOUNT="155086999298"
+  ECR_REPO_URL="${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/msa-${ENV}"
+}
+else if (  env.BRANCH_NAME == 'prod' ) {
+
+  ENV="integration-stage"
+  CLUSTER_NAME="${ENV}-cluster"
+  REGION="us-east-1"
+  AWS_ACCOUNT="155086999298"
+  ECR_REPO_URL="${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/msa-${ENV}"
+
+}
+else if (  env.BRANCH_NAME == 'ppt' ) {
+
+  ENV="integration-ppt"
+  CLUSTER_NAME="${ENV}-cluster"
+  REGION="us-east-1"
+  AWS_ACCOUNT="155086999298"
+  ECR_REPO_URL="${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/msa-${ENV}"
+}
+else {
+  REGION="us-east-1"
+  AWS_ACCOUNT="155086999298"
+}
+
+
+
+pipeline {
+agent {
+        docker {
+            label 'CI-JENKINS-SLAVE'
+            reuseNode false
+            image "${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/cicd/centos_fc_v1:latest"
+            args  '-u root:root -v /var/run/docker.sock:/var/run/docker.sock:rw,z'
+      }
+    }
+    
+parameters {
+      booleanParam(defaultValue: false, description: 'CS_SCAN ?', name: 'CS_SCAN')
+      }
+      
+
+environment {
+        BRANCH_NAME = "${env.BRANCH_NAME}"
+        APP_NAME = determineRepoName()
+        BUILD_NUMBER = "${env.BUILD_NUMBER}"
+        IMAGE_VERSION = "v_${BUILD_NUMBER}"
+        COMMIT_ID = getShortCommitHash()
+	      prod_cert_ECR_REPO_URL = "${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/msa-stg-cert"
+	      uat_cert_ECR_REPO_URL = "${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/msa-ustage-cert"
+      }
+options {
+        buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '90', numToKeepStr: '30'))
+        timestamps()
+        timeout time:60, unit:'MINUTES'
+    }
+stages {
+
+stage('Build') {
+        steps {
+                   script {
+                       msabuild_wmi(WORKSPACE,APP_NAME,BRANCH_NAME)
+                          }
+                    }
+                  }
+
+
+stage ('Unit Test') {
+         // when { expression { return !( env.BRANCH_NAME == 'ppt' || env.BRANCH_NAME == 'ppt3' || env.APP_NAME == 'integration-registry-service' || env.APP_NAME == 'integration-config-service' ) } }
+        steps {
+            unittest_wmi(WORKSPACE,APP_NAME)
+            junit 'build/test-results/test/*.xml'
+            publishHTML target: [
+            allowMissing: false,
+            alwaysLinkToLastBuild: false,
+            keepAll: true,
+            reportDir: 'build/test-results/test/',
+            reportFiles: '*.xml',
+            reportName: 'junit-Report.xml'
+               ]
+                        }
+            }
+
+stage ('Code Quality Analysis') {
+        // when { expression { return !( env.BRANCH_NAME == 'ppt' ) } }
+        steps {
+         withSonarQubeEnv('sonarqube') {
+                 sonar_wmi(WORKSPACE,APP_NAME,BRANCH_NAME,BUILD_NUMBER)
+                           }
+         timeout(time: 25, unit: 'MINUTES') {
+            waitForQualityGate abortPipeline: true
+              }
+            }
+         }
+
+stage("Jar Vulnerability Check") {
+                    steps {
+                    dependencyCheck_wmi()
+                    dependencyCheckPublisher pattern: 'build/reports/dependency-check-report.xml'
+                    }
+                }
+
+stage('Build Image') {
+        when { expression { ( env.BRANCH_NAME == 'master' || env.BRANCH_NAME == 'prod' || env.BRANCH_NAME == 'uat' || env.BRANCH_NAME == 'ppt' || env.BRANCH_NAME == 'develop' ) } }
+        steps {
+             sh "aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+             sh "docker build -t ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER} -f src/main/docker/Dockerfile src/main/docker/"
+            }
+        }
+        
+        
+stage('Publish Image') {
+          when { expression { ( env.BRANCH_NAME == 'master' || env.BRANCH_NAME == 'prod' || env.BRANCH_NAME == 'uat' || env.BRANCH_NAME == 'ppt' || env.BRANCH_NAME == 'develop' ) } }
+            steps {
+                    sh "aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+                    sh "docker tag ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER} ${ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}"
+                    sh "docker push ${ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}"
+
+            }
+        }
+        
+        
+stage('Container Security Image Scan') {       
+     steps {
+      script {
+         def imageLine = "${ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}"
+         writeFile file: 'anchore_images', text: imageLine
+         anchore bailOnFail: false, bailOnPluginFail: false, name: 'anchore_images'
+               }
+         grype_wmi(ENV,WORKSPACE,COMMIT_ID,BUILD_NUMBER,APP_NAME,BRANCH_NAME)
+            }
+        } 
+
+stage('Deploy') {
+         when { expression { ( env.BRANCH_NAME == 'master' || env.BRANCH_NAME == 'prod' || env.BRANCH_NAME == 'uat' || env.BRANCH_NAME == 'ppt' || env.BRANCH_NAME == 'develop' ) } }
+            steps {
+              script {
+                sh "aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+                sh "docker tag ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER} ${ECR_REPO_URL}/${APP_NAME}:latest"
+                sh "docker push ${ECR_REPO_URL}/${APP_NAME}:latest"
+                sh "sh src/main/docker/Deployment.sh ${APP_NAME} ${ENV} ${BRANCH_NAME} ${COMMIT_ID} ${BUILD_NUMBER} ${CLUSTER_NAME} ${ECR_REPO_URL}"
+                }
+            }
+        }
+stage('Parallel Stage CT') {
+when { expression { ( env.BRANCH_NAME == 'master' || env.BRANCH_NAME == 'prod' || env.BRANCH_NAME == 'uat' || env.BRANCH_NAME == 'develop' ) } }
+parallel {
+        stage ('API Test') {
+        when { expression { return !( env.APP_NAME == 'integration-registry-service' || env.APP_NAME == 'integration-config-service' ) } }
+        steps {
+          karate_2(WORKSPACE,APP_NAME,BRANCH_NAME)
+          }
+         }
+        stage ('Performance Test') {
+        when { expression { return !( env.APP_NAME == 'integration-registry-service' || env.APP_NAME == 'integration-config-service' ) } }
+        steps {
+               performance_2(WORKSPACE,APP_NAME,BRANCH_NAME)
+          }
+         }
+        stage('BAT') {
+        when { expression { return !( env.APP_NAME == 'integration-registry-service' || env.APP_NAME == 'integration-config-service' ) } }
+            steps {
+                echo "BAT work in progress"
+                  }
+           }
+         }
+        }
+stage('Certification ok | DEV') {
+  when { expression { env.BRANCH_NAME == 'develop' } }
+       steps {
+             sh "docker rmi ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}"
+                 }
+        }
+stage('Certification ok | QA + TAGGING') {
+  when { expression { env.BRANCH_NAME == 'master' } }
+       steps {
+                       script {
+                       tagging(WORKSPACE,APP_NAME,BRANCH_NAME,BUILD_NUMBER,COMMIT_ID)
+                       sh "docker rmi ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}"
+                          }
+                 }
+        }
+stage('Certification ok | STAGE') {
+  when { expression { env.BRANCH_NAME == 'prod' } }
+
+       steps {
+             sh "aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com;docker tag ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER} ${prod_cert_ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER};docker push ${prod_cert_ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}; docker rmi ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}; docker rmi ${prod_cert_ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}"
+                 }
+        }
+stage('Certification ok | USTAGE') {
+  when { expression { env.BRANCH_NAME == 'uat' }  }
+       steps {
+             sh "aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com;docker tag ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER} ${uat_cert_ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER};docker push ${uat_cert_ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}; docker rmi ${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}; docker rmi ${uat_cert_ECR_REPO_URL}/${APP_NAME}:${BRANCH_NAME}_${COMMIT_ID}_${BUILD_NUMBER}"
+                 }
+        }
+}
+post {
+       always {
+           echo "BUILD ABORTED"
+           sendNotifications("${currentBuild.currentResult}","${COMMIT_ID}")
+        }
+        aborted {
+            echo "BUILD ABORTED"
+        }
+        success {
+            echo "BUILD SUCCESS"
+        }
+        unstable {
+            echo "BUILD UNSTABLE"
+        }
+        failure {
+            echo "BUILD FAILURE"
+            msaFailedNotifications("${currentBuild.currentResult}","${COMMIT_ID}","${APP_NAME}")
+        }
+    }
+}
+
+
+
+
+
+

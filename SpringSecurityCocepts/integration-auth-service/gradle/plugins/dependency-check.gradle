@@ -1,0 +1,6 @@
+dependencyCheck {
+  failBuildOnCVSS = 0
+  autoUpdate=false
+  cveValidForHours=1
+  format='XML'
+}
